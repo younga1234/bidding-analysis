@@ -1,6 +1,6 @@
 ---
 name: bidding-master-pipeline
-description: 낙찰가분석 전체 파이프라인 자동 실행 (v3.2). 이미지 분석 → bidding_context.json 생성 → 3개 skill 병렬 트리거 (logic, bidding-meta-cognition, bidding-advanced-analyzer) → 3가지 결과 제시. Use when 낙찰가분석, 전체 분석, 파이프라인 실행
+description: "낙찰가분석 전체 파이프라인 자동 실행 (v3.2). 이미지 분석 -> bidding_context.json 생성 -> 3개 skill 병렬 트리거 (logic, bidding-meta-cognition, bidding-advanced-analyzer) -> 3가지 결과 제시. Use when 낙찰가분석, 전체 분석, 파이프라인 실행"
 allowed-tools: Read, Write, Bash, Glob, Skill
 ---
 

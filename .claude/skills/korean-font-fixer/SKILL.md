@@ -1,6 +1,6 @@
 ---
 name: korean-font-fixer
-description: matplotlib 한국어 폰트 문제 자동 해결. Noto Sans KR 자동 다운로드, matplotlib 폰트 캐시 재생성, 한국어 설정 적용. Use when 한국어 깨짐, 폰트 오류, Malgun Gothic 없음, matplotlib 한글 표시 문제
+description: "matplotlib 한국어 폰트 문제 자동 해결. Noto Sans KR 자동 다운로드, matplotlib 폰트 캐시 재생성, 한국어 설정 적용. Use when 한국어 깨짐, 폰트 오류, Malgun Gothic 없음, matplotlib 한글 표시 문제"
 ---
 
 # matplotlib 한국어 폰트 자동 수정

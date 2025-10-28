@@ -1,6 +1,6 @@
 ---
 name: bidding-advanced-analyzer
-description: 고급 입찰 분석 실행 (Phase 1: 시간대별, 발주처별, 2D 상관관계). bidding_context.json → advanced_analyze.py → JSON 결과 + PNG 시각화 3개 생성. Use when 고급 분석, 다차원 분석, 시각화 생성, skill 체인 자동 실행
+description: "고급 입찰 분석 실행 (Phase 1: 시간대별, 발주처별, 2D 상관관계). bidding_context.json -> advanced_analyze.py -> JSON 결과 + PNG 시각화 3개 생성. Use when 고급 분석, 다차원 분석, 시각화 생성, skill 체인 자동 실행"
 allowed-tools: Bash, Read
 ---
 

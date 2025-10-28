@@ -1,6 +1,6 @@
 ---
 name: logic
-description: 복수예가입찰 종합 분석 실행. bidding_context.json 읽기 → analyze.py 자동 실행 → 최적 입찰값 계산 (시간가중 경쟁밀도, 몰림도, 1위확률 통합). Use when 입찰 분석, 종합 분석, 최적 입찰값 계산, skill 체인 자동 실행
+description: "복수예가입찰 종합 분석 실행. bidding_context.json 읽기 -> analyze.py 자동 실행 -> 최적 입찰값 계산 (시간가중 경쟁밀도, 몰림도, 1위확률 통합). Use when 입찰 분석, 종합 분석, 최적 입찰값 계산, skill 체인 자동 실행"
 allowed-tools: Bash, Read
 ---
 

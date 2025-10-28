@@ -1,6 +1,6 @@
 ---
 name: bidding-meta-cognition
-description: 시간대별 가중 분석 실행 (1개월 40%, 3개월 30%, 6개월 20%, 1년 10%). bidding_context.json → temporal_weighted_analysis.py → 가중 평균 최적값 계산. Use when 시간 가중 분석, 최근 데이터 중시, skill 체인 자동 실행
+description: "시간대별 가중 분석 실행 (1개월 40%, 3개월 30%, 6개월 20%, 1년 10%). bidding_context.json -> temporal_weighted_analysis.py -> 가중 평균 최적값 계산. Use when 시간 가중 분석, 최근 데이터 중시, skill 체인 자동 실행"
 allowed-tools: Bash, Read
 ---
 

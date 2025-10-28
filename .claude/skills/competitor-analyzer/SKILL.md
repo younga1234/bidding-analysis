@@ -1,6 +1,6 @@
 ---
 name: competitor-analyzer
-description: 경쟁업체 입찰 패턴 분석 및 AI 사용 여부 판단. 발주처투찰률별 완전 분리 분석, 5가지 AI 탐지 지표, 시각화 생성. 엔트로피, 소수점 패턴, 업체별 분산, 시간 추세, 이상치 탐지. Use when 경쟁업체 분석, AI 탐지, 패턴 분석
+description: "경쟁업체 입찰 패턴 분석 및 AI 사용 여부 판단. 발주처투찰률별 완전 분리 분석, 5가지 AI 탐지 지표, 시각화 생성. 엔트로피, 소수점 패턴, 업체별 분산, 시간 추세, 이상치 탐지. Use when 경쟁업체 분석, AI 탐지, 패턴 분석"
 allowed-tools: Bash, Read, Write
 ---
 
