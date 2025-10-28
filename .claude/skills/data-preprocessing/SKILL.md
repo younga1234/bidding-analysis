@@ -1,160 +1,43 @@
 ---
 name: data-preprocessing
-description: "나라장터 입찰 데이터 전처리. 수정.md 요구사항 완전 구현. 공고 파일 쌍 통합, 15개 필수 컬럼 생성, 업체명 정규화, 데이터 품질 검증. 원본 데이터 보존 (재계산 없음), 사정률(예가추첨 결과)/발주처투찰률(낙찰하한율) 구분. 기초대비사정률 백분율 파싱 (98~102% 범위). 문화재연구원 미참여 공고는 삭제. 투찰여부, 미달사유, 제한사항 컬럼은 제외됨. 발주처 투찰율별 데이터 자동 분리 (데이터에서 발견된 고유 투찰율별로 자동 분리). Use when preprocessing raw bidding data from /mnt/a/25/data."
+description: "Preprocess raw Korean government bidding data. This skill should be used when cleaning and structuring raw auction data from Naramarket into analysis-ready format."
+allowed-tools: Bash, Read, Write
 ---
 
-# 나라장터 복수예가입찰 데이터 전처리 Skill
+# Data Preprocessing
 
-수정.md 요구사항에 따른 완전한 데이터 전처리 구현
+## Purpose
 
-## 핵심 기능
+Transform raw bidding data by merging announcement files, normalizing company names, validating data quality, and separating by agency bid rates.
 
-### 1️⃣ 파일 필터링 규칙
-- 공고번호 쌍 체크 (기본파일 + _참여업체목록.xlsx)
-- 참여업체 5개 이상만 처리
-- 문화재연구원/문화유산연구원 미참여 공고는 삭제 (**필수**)
+## When to Use
 
-### 2️⃣ 업체명 정규화
-- (재), (재단), 재단법인 제거
-- 문화재연구원/문화유산연구원 통일
-- 특수문자 및 공백 정리
+Use this skill when:
+- Raw bidding data needs preprocessing
+- Data from /mnt/a/25/data directory
+- Before running any analysis skills
 
-### 8️⃣ 15개 필수 컬럼 생성
-```
-1. 공고번호
-2. 공고명
-3. 순위
-4. 업체명
-5. 투찰일시
-6. 투찰금액(원)
-7. 예가대비투찰률(%)
-8. 기초대비투찰률(%)
-9. 기초대비사정률(%)
-10. 예정가격
-11. 낙찰하한가(원)
-12. 기초금액(원)
-13. 사정률(%) [공고당 1개]
-14. 발주처투찰률(%) [공고당 1개]
-15. 낙찰하한가차이(원)
-```
+## How to Use
 
-**컬럼 설명:**
-- **기초대비사정률**: 업체가 선택한 4개 추첨번호의 평균 사정률 (업체별 다름)
-- **사정률**: 예가추첨 결과로 확정된 사정률 (공고당 1개, 모든 업체 동일값)
-- **발주처투찰률**: 발주처(공고 이미지의 발주기관)가 정한 낙찰하한율 (88%, 80.495% 등, 공고당 1개)
+### Input Requirements
 
-**변경사항:**
-- ❌ 사업자등록번호 삭제
-- ❌ 대표자 삭제
-- ❌ 투찰여부 삭제
-- ❌ 미달사유 삭제
-- ❌ 제한사항 삭제
-- ✅ 기초대비사정률 추가 (업체별)
-- ✅ 사정률 추가 (공고당 1개, 예가추첨 결과)
-- ✅ 발주처투찰률 추가 (공고당 1개, 낙찰하한율)
+This skill reads from `bidding_context.json` which contains:
+- `공고번호`: Announcement number
+- `기초금액`: Base amount
+- `발주처투찰률`: Agency bid rate
+- `발주처`: Procuring agency
 
-## 사용법
+### Execution Process
 
-### 전체 데이터 처리
-```bash
-python3 /mnt/a/25/.claude/skills/data-preprocessing/preprocess_v2.py
-```
+1. **Read Context**: Extract information from `data분석/bidding_context.json`
+2. **Locate Data**: Find preprocessed data file
+3. **Execute Script**: Run the analysis script from scripts directory
+4. **Generate Output**: Create JSON results and visualizations
 
-### 단일 공고 처리
-```bash
-python3 /mnt/a/25/.claude/skills/data-preprocessing/preprocess_v2.py --single 2023-21331
-```
+### Scripts
 
-### 사용자 지정 디렉토리
-```bash
-python3 /mnt/a/25/.claude/skills/data-preprocessing/preprocess_v2.py \
-  --source-dir /path/to/data \
-  --output-dir /path/to/output
-```
+- `scripts/preprocess_v2.py`
 
-## 데이터 처리 흐름
+### Integration
 
-```
-/mnt/a/25/data/ (원본 데이터)
-  ├── 20230905571-00.xlsx
-  └── 20230905571-00_참여업체목록.xlsx
-          ↓
-      [파일 쌍 체크]
-          ↓
-      [키-값 파싱]
-          ↓
-      [데이터 통합]
-          ↓
-      [15개 컬럼 생성 - 원본 데이터 보존]
-          ↓
-      [메모리에서 전체 통합]
-          ↓
-/mnt/a/25/data전처리완료/ (개별 파일 저장 안 함)
-  ├── 전체_통합_데이터.xlsx (전체 통합 데이터)
-  └── 투찰률별 분리 파일 (실제 분석용, 데이터에서 발견된 투찰율별로 자동 생성):
-      ├── 투찰률_{발주처투찰률1}%_데이터.xlsx
-      ├── 투찰률_{발주처투찰률2}%_데이터.xlsx
-      ├── 투찰률_{발주처투찰률3}%_데이터.xlsx
-      └── ... (데이터에서 발견된 모든 고유 투찰율)
-```
-
-## 특징
-
-### 정확한 데이터 파싱
-- 키-값 형식의 공고 정보 추출
-- 헤더 행 자동 감지
-- 다양한 날짜/금액 형식 처리
-
-### 데이터 품질 보장
-- 중복 업체 체크
-- 투찰금액 유효성 검증
-- 추첨번호 정합성 확인
-- 하한가 미달 데이터 보존 (중요!)
-
-### 데이터 추출 및 계산
-- **원본 데이터 보존**: 예가대비투찰률, 기초대비투찰률, 기초대비사정률은 원본 그대로 사용
-- **사정률**: 예가추첨 결과에서 추출 (공고당 1개, 백분율 파싱)
-- **발주처투찰률**: 낙찰하한율 (88%, 80.495% 등, 공고당 1개)
-- **낙찰하한가차이**: 투찰금액 - 낙찰하한가 (자동 계산)
-
-### 발주처 투찰율별 데이터 분리 (중요!)
-전처리 과정에서 **자동으로** 발주처 투찰율별로 데이터를 분리합니다:
-- 전체 데이터에서 고유한 발주처투찰률 값을 추출
-- 각 투찰율별로 별도의 엑셀 파일 생성
-- 파일명 형식: `투찰률_{rate}%_데이터.xlsx`
-- **분석은 반드시 투찰율별로 분리된 데이터를 사용**해야 함
-
-**⚠️ 투찰율 그룹은 데이터에서 자동으로 추출됩니다!**
-
-```
-전처리 실행 시:
-1. 전체 데이터에서 고유한 발주처투찰률 값 추출
-2. 각 투찰율별로 자동으로 파일 생성
-3. 파일명: 투찰률_{rate}%_데이터.xlsx
-
-실제 투찰율 값과 건수는 데이터에 따라 다릅니다.
-공고마다 발주처투찰률이 다를 수 있습니다.
-```
-
-## 주의사항
-
-⚠️ **하한가 미달 데이터는 절대 삭제하지 않음**
-- 시장 심리선 분석에 필수적인 데이터
-- 순위 -1로 표시하되 보존
-
-⚠️ **발주처별 낙찰하한율**
-- 발주처마다 다른 낙찰하한율(발주처투찰률) 적용
-- 실제 값은 공고 데이터에서 추출됨
-- 공고마다 다를 수 있음
-
-## 로그 및 통계
-
-처리 완료 후 다음 정보 제공:
-- 처리 성공/실패 파일 수
-- 전체 미달률
-- 참여 업체 수
-- 처리 로그: `/mnt/a/25/data전처리완료/preprocessing_log.txt`
-
-## 참고 문서
-- `/mnt/a/25/수정.md` - 전처리 요구사항 명세
-- `/mnt/a/25/분석.md` - 시스템 분석 문서
+This skill integrates with the bidding analysis ecosystem and may be triggered as part of the automated pipeline or run independently for specific analysis needs.
