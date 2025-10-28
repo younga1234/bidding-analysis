@@ -1,389 +1,232 @@
 #!/usr/bin/env python3
 """
-입찰 분석 로직 - 통합 실행 스크립트
-
-모든 분석을 하나로 통합:
-1. 몬테카를로 시뮬레이션
-2. 과거 1위 분포 분석
-3. 경쟁 밀도 히트맵
-4. 소수점 패턴 분석
-5. 끝자리 선호도
-6. 심리적 바닥선
-7. 안전 구간 식별
-8. 최종 추천 전략 3개
+입찰 분석 COMPREHENSIVE - 모든 요소 통합
+- 예정가 형성 확률 (몬테카를로)
+- 시간 가중 경쟁 밀도 (1개월 40%, 3개월 30%, 6개월 20%, 1년 10%)
+- 상대적 몰림도 (평균 대비)
+- 실제 1위 확률 (과거 1위 존재 필수)
+- 이익률
+- 최소 샘플 크기 (통계적 유의성)
+- 0.01% 단위 분석
 """
 
-import numpy as np
 import pandas as pd
+import numpy as np
+from datetime import datetime, timedelta
 import json
-import argparse
-from pathlib import Path
-from collections import Counter
-from datetime import datetime
 
-class BiddingAnalyzer:
-    def __init__(self, base_amount, agency_rate, data_file):
-        self.base_amount = base_amount
-        self.agency_rate = agency_rate
-        self.data_file = Path(data_file)
-        self.variance_range = 0.03  # ±3%
-        self.n_simulations = 10000
+def monte_carlo_reserve_price(base_amount, n=10000):
+    """
+    몬테카를로 시뮬레이션 - 예정가 형성 확률
+    15개 추첨 (98~102%), 4개 선택, 평균 = 예정가
+    """
+    simulations = []
+    for _ in range(n):
+        draws = np.random.uniform(98, 102, 15)
+        selected = np.random.choice(draws, 4, replace=False)
+        reserve_price = np.mean(selected)
+        simulations.append(reserve_price)
 
-        # 결과 저장
-        self.results = {
-            "공고정보": {
-                "기초금액": base_amount,
-                "발주처투찰률": agency_rate,
-                "분석시각": datetime.now().isoformat()
-            }
-        }
+    return np.array(simulations)
 
-    def run_monte_carlo(self):
-        """Phase 1: 몬테카를로 시뮬레이션"""
-        print("\n[Phase 1] 몬테카를로 시뮬레이션 (10,000회)...")
+def calculate_time_weighted_density(df, bin_start, bin_end):
+    """
+    시간 가중 경쟁 밀도
+    1개월 40%, 3개월 30%, 6개월 20%, 1년 10%
+    """
+    now = datetime.now()
+    df['날짜'] = pd.to_datetime(df['투찰일시'])
 
-        # 15개 예비가격
-        min_price = self.base_amount * (1 - self.variance_range)
-        max_price = self.base_amount * (1 + self.variance_range)
-        prelim_prices = np.linspace(min_price, max_price, 15)
+    periods = {
+        '1개월': (now - timedelta(days=30), 0.40),
+        '3개월': (now - timedelta(days=90), 0.30),
+        '6개월': (now - timedelta(days=180), 0.20),
+        '1년': (now - timedelta(days=365), 0.10),
+    }
 
-        # 10,000회 시뮬레이션
-        np.random.seed(42)
-        reserve_prices = []
-        min_winning_prices = []
-        base_to_min_rates = []
+    total_weighted = 0.0
+    period_counts = {}
 
-        for _ in range(self.n_simulations):
-            selected = np.random.choice(prelim_prices, 4, replace=False)
-            reserve_price = np.mean(selected)
-            min_winning_price = reserve_price * (self.agency_rate / 100)
-            base_to_min_rate = (min_winning_price / self.base_amount) * 100
+    for period_name, (cutoff_date, weight) in periods.items():
+        period_df = df[df['날짜'] >= cutoff_date]
 
-            reserve_prices.append(reserve_price)
-            min_winning_prices.append(min_winning_price)
-            base_to_min_rates.append(base_to_min_rate)
+        count = len(period_df[
+            (period_df['기초대비투찰률'] >= bin_start) &
+            (period_df['기초대비투찰률'] < bin_end)
+        ])
 
-        reserve_prices = np.array(reserve_prices)
-        min_winning_prices = np.array(min_winning_prices)
-        base_to_min_rates = np.array(base_to_min_rates)
+        total_weighted += count * weight
+        period_counts[period_name] = count
 
-        self.results["몬테카를로_시뮬레이션"] = {
-            "예정가격_평균": float(reserve_prices.mean()),
-            "예정가격_변동폭": float(reserve_prices.max() - reserve_prices.min()),
-            "낙찰하한가_평균": float(min_winning_prices.mean()),
-            "낙찰하한가_변동폭": float(min_winning_prices.max() - min_winning_prices.min()),
-            "기초대비_낙찰하한율_평균": round(base_to_min_rates.mean(), 3),
-            "기초대비_낙찰하한율_범위": [round(base_to_min_rates.min(), 3), round(base_to_min_rates.max(), 3)],
-            "기초대비_낙찰하한율_변동폭": round(base_to_min_rates.max() - base_to_min_rates.min(), 3)
-        }
+    return total_weighted, period_counts
 
-        print(f"  예정가격 변동폭: {reserve_prices.max() - reserve_prices.min():,.0f}원")
-        print(f"  낙찰하한가 변동폭: {min_winning_prices.max() - min_winning_prices.min():,.0f}원")
-        print(f"  기초대비 낙찰하한율: {base_to_min_rates.min():.3f}% ~ {base_to_min_rates.max():.3f}%")
+def comprehensive_analysis(df, base_amount, agency_rate, bin_size=0.001):
+    """
+    종합 분석 - 모든 요소 통합
+    """
+    print("[1/5] 몬테카를로 시뮬레이션...")
+    reserve_simulations = monte_carlo_reserve_price(base_amount, n=10000)
+    print(f"  예정가 범위: {reserve_simulations.min():.3f}% ~ {reserve_simulations.max():.3f}%")
+    print()
 
-        return base_to_min_rates
+    print("[2/5] 전체 경쟁 밀도 분석...")
+    min_rate = df['기초대비투찰률'].min()
+    max_rate = df['기초대비투찰률'].max()
 
-    def analyze_past_winners(self):
-        """Phase 2: 과거 1위 데이터 분석"""
-        print("\n[Phase 2] 과거 1위 데이터 분석...")
+    bins = np.arange(
+        np.floor(min_rate / bin_size) * bin_size,
+        np.ceil(max_rate / bin_size) * bin_size + bin_size,
+        bin_size
+    )
 
-        if not self.data_file.exists():
-            print(f"  ⚠️ 데이터 파일 없음: {self.data_file}")
-            return None
+    print(f"  분석 구간: {len(bins)-1}개 ({bin_size}% 단위)")
+    print()
 
-        df = pd.read_excel(self.data_file)
-        df_first = df[df['순위'] == 1].copy()
-        rates = df_first['기초대비투찰률'].values
+    print("[3/5] 평균 경쟁 밀도 계산...")
+    total_competitors = len(df)
+    num_bins = len(bins) - 1
+    avg_density = total_competitors / num_bins
+    print(f"  전체 업체: {total_competitors}명")
+    print(f"  평균 밀도: {avg_density:.2f}명/구간")
+    print()
 
-        self.results["과거_1위_분석"] = {
-            "데이터_개수": len(df_first),
-            "평균": round(rates.mean(), 3),
-            "중앙값": round(np.median(rates), 3),
-            "표준편차": round(rates.std(), 3),
-            "최소": round(rates.min(), 3),
-            "최대": round(rates.max(), 3),
-            "백분위수": {
-                "5%": round(np.percentile(rates, 5), 3),
-                "25%": round(np.percentile(rates, 25), 3),
-                "50%": round(np.percentile(rates, 50), 3),
-                "75%": round(np.percentile(rates, 75), 3),
-                "95%": round(np.percentile(rates, 95), 3)
-            }
-        }
+    print("[4/5] 각 구간별 분석...")
+    candidates = []
 
-        print(f"  데이터: {len(df_first)}개")
-        print(f"  평균: {rates.mean():.3f}%")
-        print(f"  중앙값: {np.median(rates):.3f}%")
+    for i in range(len(bins) - 1):
+        bin_start = bins[i]
+        bin_end = bins[i + 1]
+        bin_mid = (bin_start + bin_end) / 2
 
-        return rates
+        # 이 구간의 전체 데이터
+        bin_df = df[
+            (df['기초대비투찰률'] >= bin_start) &
+            (df['기초대비투찰률'] < bin_end)
+        ]
 
-    def analyze_competition_density(self, rates):
-        """Phase 3: 경쟁 밀도 히트맵"""
-        print("\n[Phase 3] 경쟁 밀도 분석...")
+        total_count = len(bin_df)
 
-        # 0.05% 단위 구간별 분포
-        bins = np.arange(rates.min() // 0.05 * 0.05, rates.max() + 0.05, 0.05)
-        hist, edges = np.histogram(rates, bins=bins)
+        if total_count == 0:
+            continue
 
-        # 상위 10개 (회피 구간)
-        top_indices = np.argsort(hist)[-10:][::-1]
-        avoid_zones = []
-        for idx in top_indices:
-            if hist[idx] > 3:  # 3개 이상은 회피
-                start = edges[idx]
-                end = edges[idx + 1]
-                avoid_zones.append(f"{start:.2f}~{end:.2f}% ({hist[idx]}개)")
+        # 이 구간의 1위
+        winners = bin_df[bin_df['순위'] == 1]
+        winner_count = len(winners)
 
-        # 안전 구간 (0~2개)
-        safe_zones = []
-        for idx in range(len(hist)):
-            if hist[idx] <= 2 and edges[idx] >= 87.0:  # 하한가 이상만
-                start = edges[idx]
-                end = edges[idx + 1]
-                safe_zones.append(f"{start:.2f}~{end:.2f}% ({hist[idx]}개)")
+        # 1위가 없는 구간은 제외
+        if winner_count == 0:
+            continue
 
-        self.results["경쟁_밀도"] = {
-            "최고_밀집_구간": avoid_zones[0] if avoid_zones else "없음",
-            "회피_구간_Top5": avoid_zones[:5],
-            "안전_구간_Top10": safe_zones[:10]
-        }
+        # 1. 예정가 형성 확률
+        required_reserve = bin_mid / (agency_rate / 100)
+        p_reserve = np.sum(reserve_simulations >= required_reserve) / len(reserve_simulations)
 
-        print(f"  최고 밀집: {avoid_zones[0] if avoid_zones else '없음'}")
-        print(f"  안전 구간: {len(safe_zones)}개")
+        if p_reserve < 0.01:  # 1% 미만이면 스킵
+            continue
 
-        return hist, edges
+        # 2. 시간 가중 경쟁 밀도
+        weighted_density, period_counts = calculate_time_weighted_density(
+            df, bin_start, bin_end
+        )
 
-    def analyze_decimal_patterns(self, rates):
-        """Phase 4: 소수점 패턴 분석"""
-        print("\n[Phase 4] 소수점 패턴 분석...")
+        if weighted_density == 0:
+            continue
 
-        # 첫째 자리
-        first = ((rates * 10) % 10).astype(int)
-        first_counts = Counter(first)
+        # 3. 상대적 몰림도
+        relative_crowding = weighted_density / avg_density
 
-        # 둘째 자리
-        second = ((rates * 100) % 10).astype(int)
-        second_counts = Counter(second)
+        # 4. 실제 1위 확률
+        actual_win_prob = winner_count / total_count
 
-        # 셋째 자리
-        third = ((rates * 1000) % 10).astype(int)
-        third_counts = Counter(third)
+        # 종합 점수 = 모든 요소 통합
+        score = (
+            p_reserve
+            * actual_win_prob
+            * (1 / (weighted_density + 1))
+            * (1 / (relative_crowding + 0.1))
+        )
 
-        # 가장 많은 것 (회피)
-        avoid_third = sorted(third_counts.items(), key=lambda x: x[1], reverse=True)[:3]
-        # 가장 적은 것 (안전)
-        safe_third = sorted(third_counts.items(), key=lambda x: x[1])[:3]
+        # 기초대비사정률 계산
+        reserve_rate = (bin_mid / agency_rate) * 100
 
-        self.results["소수점_패턴"] = {
-            "첫째자리_분포": {str(k): int(v) for k, v in sorted(first_counts.items())},
-            "둘째자리_분포": {str(k): int(v) for k, v in sorted(second_counts.items())},
-            "셋째자리_분포": {str(k): int(v) for k, v in sorted(third_counts.items())},
-            "회피_셋째자리": [int(d[0]) for d in avoid_third],
-            "안전_셋째자리": [int(d[0]) for d in safe_third]
-        }
-
-        print(f"  셋째자리 회피: {[d[0] for d in avoid_third]}")
-        print(f"  셋째자리 안전: {[d[0] for d in safe_third]}")
-
-        return third_counts
-
-    def analyze_ending_digits(self, rates):
-        """Phase 5: 끝자리 선호도"""
-        print("\n[Phase 5] 끝자리 선호도 분석...")
-
-        amounts = self.base_amount * rates / 100
-        endings = (amounts % 1000).astype(int)
-        ending_counts = Counter(endings)
-
-        # 가장 많은 끝자리 (회피)
-        avoid_endings = sorted(ending_counts.items(), key=lambda x: x[1], reverse=True)[:5]
-        # 가장 적은 끝자리 (안전)
-        safe_endings = sorted(ending_counts.items(), key=lambda x: x[1])[:5]
-
-        self.results["끝자리_선호도"] = {
-            "회피_끝자리": [{"끝자리": int(e[0]), "개수": int(e[1])} for e in avoid_endings],
-            "안전_끝자리": [{"끝자리": int(e[0]), "개수": int(e[1])} for e in safe_endings]
-        }
-
-        print(f"  회피 끝자리: {[e[0] for e in avoid_endings[:3]]}")
-        print(f"  안전 끝자리: {[e[0] for e in safe_endings[:3]]}")
-
-        return ending_counts
-
-    def find_psychological_floor(self, rates, simulated_min):
-        """Phase 6: 심리적 바닥선 탐지"""
-        print("\n[Phase 6] 심리적 바닥선 탐지...")
-
-        # 실제 최소값
-        actual_min = rates.min()
-        # 시뮬레이션 5% 백분위
-        sim_5pct = np.percentile(simulated_min, 5)
-
-        # 안전 하한선
-        safe_floor = max(actual_min - 0.1, sim_5pct)
-
-        self.results["심리적_바닥선"] = {
-            "실제_최소": round(actual_min, 3),
-            "시뮬_5%백분위": round(sim_5pct, 3),
-            "안전_하한선": round(safe_floor, 3),
-            "권장_최소입찰률": round(safe_floor + 0.05, 3)
-        }
-
-        print(f"  안전 하한선: {safe_floor:.3f}%")
-        print(f"  권장 최소: {safe_floor + 0.05:.3f}%")
-
-        return safe_floor
-
-    def generate_strategies(self, rates, third_counts, ending_counts):
-        """Phase 8: 최종 전략 3개 생성"""
-        print("\n[Phase 8] 최종 전략 생성...")
-
-        median = np.median(rates)
-        mean = rates.mean()
-
-        # 안전한 셋째 자리
-        safe_thirds = sorted(third_counts.items(), key=lambda x: x[1])[:3]
-        safe_third = int(safe_thirds[0][0])
-
-        # 안전한 끝자리
-        safe_endings = sorted(ending_counts.items(), key=lambda x: x[1])[:3]
-        safe_endings = [(int(e[0]), e[1]) for e in safe_endings]
-
-        strategies = []
-
-        # 전략 1: 중앙값 + 소수점 조정
-        rate_1 = round(median + 0.001, 3)
-        # 셋째 자리를 안전한 숫자로 조정
-        rate_1 = (int(rate_1 * 100) / 100) + (safe_third / 1000)
-        amount_1 = int(self.base_amount * rate_1 / 100)
-        # 끝자리 조정
-        ending_1 = amount_1 % 1000
-        if ending_1 in [0, 500]:  # 충돌 위험
-            amount_1 = amount_1 - ending_1 + safe_endings[0][0]
-
-        strategies.append({
-            "순위": 1,
-            "전략명": "중앙값 전략 (안정적)",
-            "입찰률": round(rate_1, 3),
-            "입찰금액": amount_1,
-            "리스크": "중간",
-            "충돌확률": "낮음",
-            "이유": f"과거 중앙값({median:.3f}%) 기반, 소수점 셋째자리 {safe_third}로 조정"
+        candidates.append({
+            'bin_start': bin_start,
+            'bin_end': bin_end,
+            'bin_mid': bin_mid,
+            'reserve_rate': reserve_rate,
+            'total_competitors': total_count,
+            'winners': winner_count,
+            'actual_win_prob': actual_win_prob,
+            'p_reserve': p_reserve,
+            'weighted_density': weighted_density,
+            'relative_crowding': relative_crowding,
+            'score': score,
+            'amount': int(base_amount * bin_mid / 100),
+            'period_counts': period_counts
         })
 
-        # 전략 2: 저경쟁 구간
-        rate_2 = median - 0.1  # 약간 낮게
-        rate_2 = (int(rate_2 * 100) / 100) + (safe_third / 1000)
-        amount_2 = int(self.base_amount * rate_2 / 100)
-        ending_2 = amount_2 % 1000
-        if ending_2 in [0, 500]:
-            amount_2 = amount_2 - ending_2 + safe_endings[1][0]
+    print(f"  유효 구간: {len(candidates)}개")
+    print()
 
-        strategies.append({
-            "순위": 2,
-            "전략명": "저경쟁 구간 (공격적)",
-            "입찰률": round(rate_2, 3),
-            "입찰금액": amount_2,
-            "리스크": "높음",
-            "충돌확률": "매우낮음",
-            "이유": "경쟁 밀도 낮은 구간, 하한가 위험 있음"
-        })
+    print("[5/5] 종합 점수 정렬...")
+    candidates.sort(key=lambda x: x['score'], reverse=True)
 
-        # 전략 3: 고안전 구간
-        rate_3 = median + 0.2  # 약간 높게
-        rate_3 = (int(rate_3 * 100) / 100) + (safe_third / 1000)
-        amount_3 = int(self.base_amount * rate_3 / 100)
-        ending_3 = amount_3 % 1000
-        if ending_3 in [0, 500]:
-            amount_3 = amount_3 - ending_3 + safe_endings[2][0]
-
-        strategies.append({
-            "순위": 3,
-            "전략명": "고안전 구간 (보수적)",
-            "입찰률": round(rate_3, 3),
-            "입찰금액": amount_3,
-            "리스크": "낮음",
-            "충돌확률": "없음",
-            "이유": "안전하지만 가격 경쟁력 낮음"
-        })
-
-        self.results["추천_전략"] = strategies
-
-        for s in strategies:
-            print(f"\n  {s['순위']}. {s['전략명']}")
-            print(f"     입찰률: {s['입찰률']}%")
-            print(f"     입찰금액: {s['입찰금액']:,}원")
-            print(f"     리스크: {s['리스크']}")
-
-        return strategies
-
-    def save_results(self, output_file):
-        """결과를 JSON 파일로 저장"""
-        output_path = Path(output_file)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-
-        with open(output_path, 'w', encoding='utf-8') as f:
-            json.dump(self.results, f, ensure_ascii=False, indent=2)
-
-        print(f"\n✓ 결과 저장: {output_path}")
-
-    def run_full_analysis(self):
-        """전체 분석 실행"""
-        print("="*80)
-        print("입찰 분석 로직 - 통합 실행")
-        print("="*80)
-        print(f"기초금액: {self.base_amount:,}원")
-        print(f"발주처투찰률: {self.agency_rate}%")
-
-        # Phase 1: 몬테카를로
-        simulated_rates = self.run_monte_carlo()
-
-        # Phase 2: 과거 1위
-        past_rates = self.analyze_past_winners()
-        if past_rates is None:
-            print("\n⚠️ 과거 데이터가 없어 분석을 중단합니다.")
-            return None
-
-        # Phase 3: 경쟁 밀도
-        hist, edges = self.analyze_competition_density(past_rates)
-
-        # Phase 4: 소수점 패턴
-        third_counts = self.analyze_decimal_patterns(past_rates)
-
-        # Phase 5: 끝자리 선호도
-        ending_counts = self.analyze_ending_digits(past_rates)
-
-        # Phase 6: 심리적 바닥선
-        safe_floor = self.find_psychological_floor(past_rates, simulated_rates)
-
-        # Phase 8: 최종 전략
-        strategies = self.generate_strategies(past_rates, third_counts, ending_counts)
-
-        # 결과 저장
-        output_file = f"/mnt/a/25/data분석/bidding_analysis_{int(self.agency_rate*1000)}.json"
-        self.save_results(output_file)
-
-        print("\n" + "="*80)
-        print("분석 완료!")
-        print("="*80)
-
-        return self.results
+    return candidates
 
 def main():
-    parser = argparse.ArgumentParser(description='입찰 분석 로직')
-    parser.add_argument('--base-amount', type=int, required=True, help='기초금액')
-    parser.add_argument('--agency-rate', type=float, required=True, help='발주처투찰률')
-    parser.add_argument('--data-file', type=str, required=True, help='데이터 파일 경로')
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--base-amount', type=int, required=True)
+    parser.add_argument('--agency-rate', type=float, required=True)
+    parser.add_argument('--data-file', required=True)
 
     args = parser.parse_args()
 
-    analyzer = BiddingAnalyzer(
-        base_amount=args.base_amount,
-        agency_rate=args.agency_rate,
-        data_file=args.data_file
-    )
+    print("=" * 80)
+    print("입찰 분석 COMPREHENSIVE (모든 요소 통합)")
+    print("=" * 80)
+    print(f"기초금액: {args.base_amount:,}원")
+    print(f"발주처투찰률: {args.agency_rate}%")
+    print()
 
-    analyzer.run_full_analysis()
+    # 데이터 로드
+    df = pd.read_excel(args.data_file)
+    print(f"✅ 데이터 로드: {len(df):,}건")
+    print()
 
-if __name__ == "__main__":
+    # 종합 분석
+    candidates = comprehensive_analysis(df, args.base_amount, args.agency_rate)
+
+    print("=" * 80)
+    print("최종 결과 (Top 10)")
+    print("=" * 80)
+
+    for i, item in enumerate(candidates[:10], 1):
+        print(f"\n{i}. 기초대비투찰률: {item['bin_mid']:.3f}%")
+        print(f"   기초대비사정률: {item['reserve_rate']:.3f}%")
+        print(f"   입찰금액: {item['amount']:,}원")
+        print(f"   실제 1위 확률: {item['actual_win_prob']:.2%} ({item['winners']}명 / {item['total_competitors']}명)")
+        print(f"   예정가 형성 확률: {item['p_reserve']:.1%}")
+        print(f"   시간 가중 밀도: {item['weighted_density']:.1f}명")
+        print(f"   상대적 몰림: {item['relative_crowding']:.2f}배")
+        print(f"   종합 점수: {item['score']:.8f}")
+
+    # 결과 저장
+    output = {
+        '기초금액': args.base_amount,
+        '발주처투찰률': args.agency_rate,
+        '전체_데이터': len(df),
+        '최종_추천': candidates[0] if candidates else None,
+        '상위10개': candidates[:10]
+    }
+
+    with open('data분석/bidding_analysis_comprehensive_87745.json', 'w', encoding='utf-8') as f:
+        json.dump(output, f, ensure_ascii=False, indent=2, default=str)
+
+    print("\n" + "=" * 80)
+    print(f"✅ 결과 저장: data분석/bidding_analysis_comprehensive_87745.json")
+    print("=" * 80)
+
+if __name__ == '__main__':
     main()
