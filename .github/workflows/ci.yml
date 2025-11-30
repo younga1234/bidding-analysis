@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 코드 체크아웃
+        uses: actions/checkout@v4
+
+      - name: Python 설정
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 의존성 설치
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas numpy openpyxl scipy matplotlib scikit-learn
+
+      - name: 전처리 스크립트 문법 검사
+        run: |
+          python -m py_compile .claude/skills/data-preprocessing/preprocess_v2.py
+
+      - name: 분석 스크립트 문법 검사
+        run: |
+          python -m py_compile .claude/skills/bidding-analyzer/integrated_pipeline.py
